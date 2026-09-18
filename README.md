@@ -25,6 +25,7 @@ v100 服务器(192.168.20.145/.146)上 Qwen3.8-27B 服务的 API 网关。单文
 - **角色规范化**: instructions/developer/system 合并为开头唯一 system(解决 "Unexpected message role" / "System message must be at the beginning")
 - **thinking 档位映射**: low/medium/high(max)→模板合法值 low/medium/xhigh,收进 chat_template_kwargs
 - **并发控制**: 信号量(默认3)+ 队列(10)+ 排队超时 120s → 429
+- **推理 token 回报**: fork 的 usage 缺 `completion_tokens_details`(上游代码未随 fork 发布),网关翻译时把思考文本 POST 引擎 `/tokenize` 取**精确**计数回填 `output_tokens_details.reasoning_tokens`(不可用时字符估算兜底),Pisper"推理 Tokens"面板得以显示
 - **prefix cache 观测**: 每请求 cached_tokens 统计、`GET /cache/stats` 实时指标、非流式响应带 `X-Cached-Tokens` 头、system prompt 每 30s 保温重放防 LRU 逐出
 - **认证**: `Authorization: Bearer <VLLM_API_KEY>`,密钥只在服务器 env 文件(600 权限),不入库不入日志
 

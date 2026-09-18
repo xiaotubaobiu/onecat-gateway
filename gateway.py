@@ -676,7 +676,27 @@ def chat_body_to_responses(chat, orig, budget):
     return body
 
 
-async def stream_chat_as_responses(up, write, orig, budget):
+async def _reasoning_tokens_of(session, model, text):
+    """思考 token 精确计数: 1Cat fork 的 usage 不带 completion_tokens_details(上游代码未随 fork 发布),
+    引擎 /tokenize 端点按真实分词返回 count; 不可用时按字符混合估算兜底 (CJK ~1.6 字/token, 其他 ~3.8 字符/token)"""
+    text = (text or "").strip()
+    if not text:
+        return 0
+    if session is not None:
+        try:
+            async with session.post(f"{UPSTREAM}/tokenize",
+                                    json={"model": model or "qwen3.8-27b", "prompt": text},
+                                    headers={"Authorization": f"Bearer {API_KEY}"},
+                                    timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status == 200:
+                    return int((await r.json()).get("count") or 0)
+        except Exception as e:
+            log(f"tokenize unavailable, estimating: {type(e).__name__}")
+    cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+    return max(1, round(cjk / 1.6 + (len(text) - cjk) / 3.8))
+
+
+async def stream_chat_as_responses(up, write, orig, budget, http=None):
     """流式: 逐行读上游 chat SSE，翻译成 Responses SSE 事件序列"""
     seq = 0
     rid = _rid("resp")
@@ -828,6 +848,11 @@ async def stream_chat_as_responses(up, write, orig, budget):
 
     done_items.sort(key=lambda x: x[0])
     final_items = [it for _, it in done_items]
+    if r_text.strip():
+        rt = await _reasoning_tokens_of(http, orig.get("model"), r_text)
+        if rt:
+            usage = usage if isinstance(usage, dict) else {}
+            usage.setdefault("completion_tokens_details", {})["reasoning_tokens"] = rt
     if finish == "length":
         sk = _resp_skeleton(rid, orig, budget, "incomplete", final_items, _usage_of(usage))
         sk["incomplete_details"] = {"reason": "max_output_tokens"}
@@ -961,7 +986,14 @@ async def gen_proxy(request):
                 rec = None
                 if responses_origin:
                     try:
-                        out = chat_body_to_responses(json.loads(data), orig_payload, orig_budget)
+                        cj = json.loads(data)
+                        r_txt = ((cj.get("choices") or [{}])[0].get("message") or {}).get("reasoning") or ""
+                        if isinstance(r_txt, str) and r_txt.strip():
+                            rt = await _reasoning_tokens_of(session, cj.get("model"), r_txt)
+                            if rt:
+                                cj.setdefault("usage", {}).setdefault(
+                                    "completion_tokens_details", {})["reasoning_tokens"] = rt
+                        out = chat_body_to_responses(cj, orig_payload, orig_budget)
                         data = json.dumps(out, ensure_ascii=False).encode()
                         rec = record_usage(out.get("usage"))
                     except Exception as e:
@@ -994,7 +1026,7 @@ async def gen_proxy(request):
                 if responses_origin:
                     async def write(s):
                         await resp.write(s.encode())
-                    await stream_chat_as_responses(up, write, orig_payload, orig_budget)
+                    await stream_chat_as_responses(up, write, orig_payload, orig_budget, session)
                 else:
                     # v4.2: 流式透传同时旁路解析 usage 行, 统计 prefix cache 命中
                     ubuf = b""
