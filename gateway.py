@@ -476,8 +476,10 @@ def _shape_anomaly(payload):
 
 
 def responses_to_chat_payload(payload):
-    """Responses 请求体 -> chat completions 请求体；instructions/system/developer 合并到开头 system"""
+    """Responses 请求体 -> chat completions 请求体；instructions/system/developer 合并到开头 system
+    返回 (chat, img_dropped, img_attached); 无可用 input 时 chat 为 None"""
     msgs, sys_texts = [], []
+    n_drop = n_attach = 0
     instr = payload.get("instructions")
     if isinstance(instr, str) and instr.strip():
         sys_texts.append(instr.strip())
@@ -486,16 +488,35 @@ def responses_to_chat_payload(payload):
     if isinstance(items, str):
         msgs.append({"role": "user", "content": items})
     elif isinstance(items, list):
-        pending_imgs, n_drop, n_attach = [], 0, 0
+        pending_imgs = []
 
-        def _cap(imgs):
-            nonlocal n_drop
-            keep = []
-            for u in imgs:
-                if len(u) <= IMG_DATAURI_MAX and len(keep) < MAX_IMAGES_PER_REQ:
-                    keep.append(u)
-                else:
-                    n_drop += 1
+        # 引擎 --limit-mm-per-prompt 按"整条请求"校验, 而历史图片随轮次累积,
+        # 必须按全请求计数: 超出上限时丢最老、保最新, 保证永不触发引擎硬 400
+        scan = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            t = it.get("type")
+            if t in (None, "message"):
+                scan.append(_content_parts(it.get("content"))[1])
+            elif t == "input_image":
+                u = _img_url_of(it)
+                if u:
+                    scan.append([u])
+            elif t == "function_call_output":
+                out = it.get("output")
+                scan.append(_content_parts(out)[1] if isinstance(out, list) else [])
+        quota_drop = max(0, sum(len(x) for x in scan) - MAX_IMAGES_PER_REQ)
+
+        def _take(imgs):
+            nonlocal quota_drop, n_drop
+            out = list(imgs)
+            while quota_drop > 0 and out:  # 超额: 从最老的开始丢, 保当轮最新图
+                out.pop(0)
+                quota_drop -= 1
+                n_drop += 1
+            keep = [u for u in out if len(u) <= IMG_DATAURI_MAX]
+            n_drop += len(out) - len(keep)
             return keep
 
         for it in items:
@@ -513,7 +534,7 @@ def responses_to_chat_payload(payload):
                     msgs.append({"role": "tool", "tool_call_id": it.get("tool_call_id") or "",
                                  "content": text})
                 else:
-                    imgs = _cap(pending_imgs + imgs)
+                    imgs = _take(pending_imgs + imgs)
                     pending_imgs = []
                     n_attach += len(imgs)
                     msgs.append({"role": role, "content": _mk_content(text, imgs)})
@@ -540,7 +561,7 @@ def responses_to_chat_payload(payload):
                     text, imgs = (json.dumps(out, ensure_ascii=False) if out is not None else ""), []
                 msgs.append({"role": "tool", "tool_call_id": it.get("call_id") or "",
                              "content": text})
-                imgs = _cap(pending_imgs + imgs)
+                imgs = _take(pending_imgs + imgs)
                 pending_imgs = []
                 if imgs:
                     # Qwen 模板 tool 角色只收文本: 图转成紧随其后的 user 消息
@@ -550,7 +571,7 @@ def responses_to_chat_payload(payload):
             # reasoning 等其他类型 item：思考内容不回放，跳过
         if pending_imgs:
             n_attach += len(pending_imgs)
-            msgs.append({"role": "user", "content": _mk_content("", _cap(pending_imgs))})
+            msgs.append({"role": "user", "content": _mk_content("", _take(pending_imgs))})
         if n_attach:
             log(f"images attached: {n_attach}")
         if n_drop:
@@ -558,7 +579,7 @@ def responses_to_chat_payload(payload):
     if sys_texts:
         msgs.insert(0, {"role": "system", "content": "\n\n".join(sys_texts)})
     if not msgs:
-        return None
+        return None, 0, 0
 
     chat = {"model": payload.get("model"), "messages": msgs,
             "stream": bool(payload.get("stream"))}
@@ -591,7 +612,7 @@ def responses_to_chat_payload(payload):
             chat["tools"] = ct
     if chat["stream"]:
         chat["stream_options"] = {"include_usage": True}
-    return chat
+    return chat, n_drop, n_attach
 
 
 def _resp_skeleton(rid, orig, budget, status="in_progress", output=None, usage=None):
@@ -852,13 +873,14 @@ async def gen_proxy(request):
         return web.json_response({"error": {"message": "invalid JSON body"}}, status=400)
 
     responses_origin = request.path == "/v1/responses"
+    img_drop = 0
     if responses_origin:
         # v4.1: responses 完整翻译为 chat 发引擎（引擎 responses 实现对工具调用长对话不可靠）
         orig_payload = payload
         anomaly = _shape_anomaly(payload)
         if anomaly:
             log(f"payload anomaly: {anomaly}")
-        payload = responses_to_chat_payload(payload)
+        payload, img_drop, img_attach = responses_to_chat_payload(payload)
         if payload is None:
             return web.json_response({"error": {"message": "no usable input items",
                                                  "type": "invalid_request_error"}}, status=400)
@@ -950,18 +972,23 @@ async def gen_proxy(request):
                     except Exception:
                         pass
                 hdrs2 = {}
+                if img_drop:
+                    hdrs2["X-Images-Dropped"] = str(img_drop)
                 if rec:
                     pt, ct = rec
                     hdrs2["X-Cached-Tokens"] = str(ct)
                     hdrs2["X-Cache-Hit-Ratio"] = f"{ct / pt:.3f}" if pt else "0"
                 return web.Response(body=data, status=200, content_type="application/json",
                                     headers=hdrs2)
-            resp = web.StreamResponse(status=200, headers={
+            sheaders = {
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
-            })
+            }
+            if img_drop:
+                sheaders["X-Images-Dropped"] = str(img_drop)
+            resp = web.StreamResponse(status=200, headers=sheaders)
             await resp.prepare(request)
             try:
                 if responses_origin:
