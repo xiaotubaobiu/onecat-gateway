@@ -1,0 +1,17 @@
+[Unit]
+Description=onecat API gateway v4.2 (0.0.0.0:2223 -> vLLM 127.0.0.1:8000)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/z/onecat/gateway
+EnvironmentFile=/home/z/onecat/config/onecat.env
+ExecStart=/home/z/onecat/gateway/venv/bin/python /home/z/onecat/gateway/gateway.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/z/onecat/logs/gateway.log
+StandardError=append:/home/z/onecat/logs/gateway.log
+
+[Install]
+WantedBy=default.target
