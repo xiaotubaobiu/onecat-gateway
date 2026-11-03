@@ -107,3 +107,5 @@ python tests/live_smoke.py --concurrency 6 --output /tmp/onecat-smoke.json
 全链路测试包含 chat/Messages 普通和 SSE、Anthropic 工具调用、Responses 回归、并发压测、DFlash 计数差分及 GPU 峰值。
 单次粗口文学样例用于检查该权重的正常生成, 不能据此保证所有主题都不拒答。
 `/v1/messages/count_tokens` 尚未在网关开放; 本次验收针对 `/v1/messages`。
+
+实际部署与测试数字见 [2026-11-03 验收记录](docs/deployment-2026-11-03.md), 包含 250K 冷输入的客户端超时及缓存重试结果。

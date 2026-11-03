@@ -27,9 +27,9 @@
 ## Tasks
 1. [x] Download pinned main checkpoint; validate config, indexed tensors and hashes; verify existing draft against its pinned upstream revision.
 2. [x] Write failing HTTP integration tests for Messages/auth/status/SSE/concurrency/cancellation; implement native forwarding and run full unit suite.
-3. [ ] Back up live files; add tuned DFlash launcher and parameters; recreate engine using existing Compose management; retry documented resource settings if necessary.
-4. [ ] Install gateway and explicit systemd concurrency; daemon-reload/restart; test chat and Messages JSON/SSE, tools, errors, Responses regression, peak GPU memory, speculative metrics and decode throughput.
-5. [ ] Fresh code review, fix substantive findings, publish reviewed code and deployment documentation to supplied repository; verify remote commit.
+3. [x] Back up live files; add tuned DFlash launcher and parameters; recreate engine using existing Compose management; retry documented resource settings if necessary.
+4. [x] Install gateway and explicit systemd concurrency; daemon-reload/restart; test chat and Messages JSON/SSE, tools, errors, Responses regression, peak GPU memory, speculative metrics and decode throughput.
+5. [x] Fresh code review, fix substantive findings, publish reviewed code and deployment documentation to supplied repository; verify remote commit.
 
 ## Progress and rulings
 - Existing deployment has no installed engine systemd unit: Docker Compose owns engine; gateway uses systemd --user. Recreate engine via Compose and reload/restart the actual gateway user unit.
@@ -41,3 +41,4 @@
 - Gateway native proxy: 7 tests failed before implementation; 9 HTTP regression tests now pass including gzip, queue cancellation, and shared semaphore.
 - Independent review completed: fixed upstream SSE Cache-Control preservation (regression failed then passed), require positive speculative metric deltas, and reject missing/failed GPU samples. Nine HTTP tests pass; shell/Python syntax and Compose config validated.
 - Main weights validated: all 20 repository files, all LFS SHA256 values, safetensors headers/data boundaries, and 1775 indexed tensors. HF CLI completed on ext4; sibling model path is a symlink. Engine first attempt 6 / 0.80 is compiling with DFlash2 (7 speculative tokens).
+- Deployment complete on first 6 / 0.80 attempt. Live smoke 12/12, unit HTTP suite 9/9. Benchmark 121.40 decode tok/s with positive draft and acceptance deltas. Long input 250033 tokens: initial client timeout at 900s, retry reused 240608 tokens and returned OK/200 in 75.87s; peak 26.0625 GiB per GPU. Code published to main as e08aa58904c1621ea2898a1fc45e4711d66a57c7; detailed acceptance report accompanies final documentation update. Docker unless-stopped restored.
