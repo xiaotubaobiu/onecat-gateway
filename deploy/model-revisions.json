@@ -1,0 +1,123 @@
+[
+  {
+    "role": "main",
+    "repository": "tangles/Qwen3.8-27B-Uncensored-NVFP4-1Cat",
+    "revision": "f1e503c3b16f8baac5d08decad8a2fad7dee8c6b",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1570
+      },
+      {
+        "name": "README.md",
+        "size": 1264
+      },
+      {
+        "name": "calibration.json",
+        "size": 460
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 8952
+      },
+      {
+        "name": "config.json",
+        "size": 5335
+      },
+      {
+        "name": "generation_config.json",
+        "size": 214
+      },
+      {
+        "name": "model-00001-of-00007.safetensors",
+        "size": 4971064280,
+        "sha256": "acb9b23f8d7eedef89e35d68a4dd7236ef747d7000ae05da91dd0daa14e8c03f",
+        "tensors": 427
+      },
+      {
+        "name": "model-00002-of-00007.safetensors",
+        "size": 4965155104,
+        "sha256": "dfd5d5954e93c9fae0a9d4f602ccbca6d85b8f9b2637aaa1ce54214cc73c6080",
+        "tensors": 291
+      },
+      {
+        "name": "model-00003-of-00007.safetensors",
+        "size": 4902240568,
+        "sha256": "912dad85dca871e3983784b3ff48860b5d80a77f2a3b8e4abaea961d7924337d",
+        "tensors": 290
+      },
+      {
+        "name": "model-00004-of-00007.safetensors",
+        "size": 4986044040,
+        "sha256": "8c2f7f90c0bc034ae4a3cb05a802a564901d3757f9971f084a0fc515fc578704",
+        "tensors": 288
+      },
+      {
+        "name": "model-00005-of-00007.safetensors",
+        "size": 4965156752,
+        "sha256": "f91ea33d5d78db08fdf3aea4d7daf6fc6bbb05e342235cb00def1941814e2bba",
+        "tensors": 295
+      },
+      {
+        "name": "model-00006-of-00007.safetensors",
+        "size": 2781629912,
+        "sha256": "5e966c8e5d3f3ad8748c43f3c98ddc4e698a8c01fd6a6f192b5087da000de96a",
+        "tensors": 168
+      },
+      {
+        "name": "model-00007-of-00007.safetensors",
+        "size": 2542796928,
+        "sha256": "54d83c1d36631de231876217a8e0c2483eccee8746369a482b79442bdfc5d958",
+        "tensors": 1
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 173590
+      },
+      {
+        "name": "model_mtp.safetensors",
+        "size": 849400392,
+        "sha256": "7a9fd4ee9af748f364fbe767066e5c4dd7ab9f75cde42a2f48d82b898dec29e1",
+        "tensors": 15
+      },
+      {
+        "name": "processor_config.json",
+        "size": 1220
+      },
+      {
+        "name": "quantization-audit.json",
+        "size": 748
+      },
+      {
+        "name": "recipe.yaml",
+        "size": 322
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 19989325,
+        "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 1165
+      }
+    ]
+  },
+  {
+    "role": "draft",
+    "repository": "incoai/Qwen3.8-27B-DFlash2",
+    "revision": "dedf8df68adfb1afeaf7b7480c0a0243108177b4",
+    "files": [
+      {
+        "name": "assets/dflash2-figure.png",
+        "bytes": 286889,
+        "sha256": "6d8dcc9a9472bddb644c881fe83050b5343d09bf5ffb0912e5598e55fe671e99"
+      },
+      {
+        "name": "model.safetensors",
+        "bytes": 3848817896,
+        "sha256": "67fc76d68dc5a9415511a4f394ef744d67510cd20e93b37cc2cc7d28e4bab65c"
+      }
+    ]
+  }
+]

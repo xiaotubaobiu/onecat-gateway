@@ -1,0 +1,23 @@
+services:
+  onecat-vllm:
+    image: onecat-base:24.04
+    container_name: onecat-vllm
+    restart: unless-stopped
+    runtime: nvidia
+    network_mode: host
+    shm_size: '64gb'
+    environment:
+      NVIDIA_VISIBLE_DEVICES: 4,5,6,7
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HOME: /home/z
+      CUDA_HOME: /usr/local/cuda
+      NCCL_DEBUG: WARN
+      TOKENIZERS_PARALLELISM: "false"
+    env_file:
+      - /home/z/onecat/config/onecat.env
+      - /home/z/onecat/config/tuned.env
+    volumes:
+      - /home/z:/home/z
+      - /Dataset/onecat/models:/Dataset/onecat/models
+    working_dir: /home/z/onecat
+    command: ["bash","-lc","m=$(cat /home/z/onecat/config/mode 2>/dev/null || echo target); case $$m in dflash-tuned) s=start-dflash2-tuned.sh;; dflash) s=start-dflash2.sh;; dflash8k) s=start-dflash2-b8192.sh;; tuned) s=start-target-tuned.sh;; *) s=start-target-only.sh;; esac; echo \"onecat mode=$$m -> $$s\"; exec /home/z/onecat/bin/$$s"]

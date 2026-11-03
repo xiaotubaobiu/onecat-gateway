@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """onecat API gateway: clients -> 127.0.0.1:8000 (1Cat-vLLM)
 - 并发限流: ONECAT_MAX_CONCURRENT (默认3) + 队列 ONECAT_MAX_QUEUE(10) + 排队超时 120s -> 429
-- 认证: Authorization: Bearer <key>
+- 认证: Authorization: Bearer <key>; Anthropic /v1/messages 也支持 x-api-key
+- Anthropic Messages(v4.4): 原生请求体/协议头/状态码透传, JSON/SSE 共用并发限制
 - SSE 流式透传; 完成/异常/客户端断开均释放并发名额
 - 输出预算: 默认4096, 自动压到上限131072 (兼容 max_tokens/max_output_tokens/max_completion_tokens)
 - 上下文预算自适应重试: vLLM 报"输入+输出超窗"时, 弹掉输出预算重发, 引擎原生默认
@@ -32,6 +33,7 @@
 import asyncio, hashlib, json, os, re, time, uuid
 import aiohttp
 from aiohttp import web
+from multidict import CIMultiDict
 
 UPSTREAM = os.environ.get("ONECAT_UPSTREAM", "http://127.0.0.1:8000")
 MAX_CONCURRENT = int(os.environ.get("ONECAT_MAX_CONCURRENT", "3"))
@@ -246,7 +248,7 @@ async def _stop_bg(app):
         t.cancel()
 
 
-PATHS = {"/v1/chat/completions", "/v1/responses", "/v1/completions"}
+PATHS = {"/v1/chat/completions", "/v1/responses", "/v1/completions", "/v1/messages"}
 BUDGET_KEYS = ("max_tokens", "max_output_tokens", "max_completion_tokens")
 BUDGET_CAP = 131072  # xhigh 满配实测一轮 ~52k token(思考~35%), 64k 余量偏紧, 放到窗口内的 128k
 BUDGET_DEFAULT = 4096
@@ -886,12 +888,86 @@ async def models(request):
             return web.Response(body=body, status=r.status, content_type="application/json")
 
 
-async def gen_proxy(request):
+async def acquire_slot():
+    """One queue/semaphore shared by OpenAI and Anthropic generation."""
     global waiting
-    if request.headers.get("Authorization") != f"Bearer {API_KEY}":
+    if waiting >= MAX_QUEUE:
+        return web.json_response({"error": {"message": f"server busy: queue full ({MAX_QUEUE} waiting)", "type": "rate_limit_error"}}, status=429)
+    waiting += 1
+    t0 = time.monotonic()
+    try:
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=QUEUE_TIMEOUT)
+        except asyncio.TimeoutError:
+            return web.json_response({"error": {"message": f"server busy: queued for over {int(QUEUE_TIMEOUT)}s", "type": "rate_limit_error"}}, status=429)
+    finally:
+        waiting -= 1
+    log(f"slot acquired after {time.monotonic()-t0:.1f}s queue_wait")
+    return None
+
+
+def proxy_headers(headers, *, request=False):
+    """Preserve end-to-end headers, excluding hop-by-hop framing."""
+    excluded = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+                "te", "trailer", "transfer-encoding", "upgrade", "content-length"}
+    for value in headers.getall("Connection", []):
+        excluded.update(part.strip().lower() for part in value.split(","))
+    if request:
+        # aiohttp has already decoded any request content encoding.
+        excluded.update({"host", "content-encoding"})
+    return CIMultiDict((k, v) for k, v in headers.items() if k.lower() not in excluded)
+
+
+async def messages_proxy(request):
+    # No OpenAI budget/thinking/role transforms: Anthropic payload is native.
+    body = await request.read()
+    rejected = await acquire_slot()
+    if rejected is not None:
+        return rejected
+    response = None
+    try:
+        headers = proxy_headers(request.headers, request=True)
+        headers["Authorization"] = f"Bearer {API_KEY}"
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
+        async with aiohttp.ClientSession(timeout=timeout, auto_decompress=False) as session:
+            async with session.post(f"{UPSTREAM}{request.rel_url}", data=body,
+                                    headers=headers, allow_redirects=False) as upstream:
+                out_headers = proxy_headers(upstream.headers)
+                if upstream.content_type == "text/event-stream":
+                    out_headers.setdefault("Cache-Control", "no-cache")
+                    out_headers["X-Accel-Buffering"] = "no"
+                response = web.StreamResponse(status=upstream.status, headers=out_headers)
+                await response.prepare(request)
+                async for chunk in upstream.content.iter_any():
+                    await response.write(chunk)
+                await response.write_eof()
+                return response
+    except (asyncio.CancelledError, ConnectionResetError):
+        raise
+    except Exception as exc:
+        log(f"messages proxy error: {type(exc).__name__}")
+        if response is not None and response.prepared:
+            # Status was sent: terminate the partial stream, never fabricate JSON.
+            if request.transport is not None:
+                request.transport.close()
+            raise
+        return web.json_response({"type": "error", "error": {
+            "type": "api_error", "message": f"gateway upstream failure: {type(exc).__name__}"}}, status=502)
+    finally:
+        sem.release()
+        log("slot released")
+
+
+async def gen_proxy(request):
+    authorized = request.headers.get("Authorization") == f"Bearer {API_KEY}"
+    if request.path == "/v1/messages":
+        authorized = authorized or request.headers.get("x-api-key") == API_KEY
+    if not authorized:
         return web.json_response({"error": {"message": "invalid or missing API key", "type": "auth_error"}}, status=401)
     if request.path not in PATHS:
         return web.json_response({"error": {"message": f"path {request.path} not exposed by gateway"}}, status=404)
+    if request.path == "/v1/messages":
+        return await messages_proxy(request)
     try:
         payload = await request.json()
     except Exception:
@@ -928,18 +1004,9 @@ async def gen_proxy(request):
         ins = orig_payload.get("instructions")
         register_warm(ins if isinstance(ins, str) else "")
 
-    if waiting >= MAX_QUEUE:
-        return web.json_response({"error": {"message": f"server busy: queue full ({MAX_QUEUE} waiting)", "type": "rate_limit_error"}}, status=429)
-    waiting += 1
-    t0 = time.monotonic()
-    try:
-        try:
-            await asyncio.wait_for(sem.acquire(), timeout=QUEUE_TIMEOUT)
-        except asyncio.TimeoutError:
-            return web.json_response({"error": {"message": f"server busy: queued for over {int(QUEUE_TIMEOUT)}s", "type": "rate_limit_error"}}, status=429)
-    finally:
-        waiting -= 1
-    log(f"slot acquired after {time.monotonic()-t0:.1f}s queue_wait")
+    rejected = await acquire_slot()
+    if rejected is not None:
+        return rejected
     try:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -1088,8 +1155,10 @@ def main():
     app.router.add_post("/v1/chat/completions", gen_proxy)
     app.router.add_post("/v1/completions", gen_proxy)
     app.router.add_post("/v1/responses", gen_proxy)
+    app.router.add_post("/v1/messages", gen_proxy)
     web.run_app(app, host=os.environ.get("ONECAT_HOST", "127.0.0.1"),
-                port=int(os.environ.get("ONECAT_PORT", "8080")), print=None)
+                port=int(os.environ.get("ONECAT_PORT", "8080")), print=None,
+                handler_cancellation=True)
 
 
 if __name__ == "__main__":

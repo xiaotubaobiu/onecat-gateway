@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.superpowers/
+.venv/
+*.env
+!*.env.example

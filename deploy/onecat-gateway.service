@@ -1,5 +1,5 @@
 [Unit]
-Description=onecat API gateway v4.2 (0.0.0.0:2223 -> vLLM 127.0.0.1:8000)
+Description=onecat API gateway v4.4 (OpenAI and Anthropic, :2223 -> :8000)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,6 +7,12 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/z/onecat/gateway
 EnvironmentFile=/home/z/onecat/config/onecat.env
+Environment="ONECAT_MAX_CONCURRENT=6"
+Environment="ONECAT_MAX_QUEUE=10"
+Environment="ONECAT_QUEUE_TIMEOUT=120"
+Environment="ONECAT_MAX_MODEL_LEN=262144"
+# Avoid background generation bypassing the user semaphore.
+Environment="ONECAT_WARM_ENABLED=0"
 ExecStart=/home/z/onecat/gateway/venv/bin/python /home/z/onecat/gateway/gateway.py
 Restart=always
 RestartSec=5
